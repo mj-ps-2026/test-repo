@@ -22,29 +22,40 @@ app.get('/', (req, res) => {
           display: flex;
           justify-content: center;
           align-items: center;
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          background: linear-gradient(135deg, #ff6b6b, #feca57, #ff9ff3, #ff6b6b);
+          background-size: 300% 300%;
+          animation: sunsetShift 10s ease infinite;
           font-family: 'Poppins', sans-serif;
         }
         .container {
           text-align: center;
-          animation: fadeIn 1s ease-out;
+          animation: fadeIn 1s ease-out, float 3s ease-in-out infinite;
         }
         h1 {
           font-size: 5rem;
           font-weight: 600;
           color: white;
-          text-shadow: 0 4px 20px rgba(0,0,0,0.2);
+          text-shadow: 0 4px 20px rgba(0,0,0,0.3);
           letter-spacing: -2px;
         }
         p {
           font-size: 1.2rem;
-          color: rgba(255,255,255,0.8);
+          color: rgba(255,255,255,0.9);
           margin-top: 1rem;
           font-weight: 300;
+        }
+        @keyframes sunsetShift {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
         }
         @keyframes fadeIn {
           from { opacity: 0; transform: translateY(20px); }
           to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
         }
       </style>
     </head>
