@@ -1,0 +1,25 @@
+{
+  "name": "hello-world-app",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mj-ps-2026/test-repo.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/mj-ps-2026/test-repo/issues"
+  },
+  "homepage": "https://github.com/mj-ps-2026/test-repo#readme",
+  "dependencies": {
+    "express": "^5.2.1"
+  }
+}
