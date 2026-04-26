@@ -178,7 +178,8 @@ async function sendDigest(gmail, inbox, digest) {
     ? `📬 ${inbox.length} need attention, ${digest.length} FYI — ${now}`
     : `📋 Digest (${digest.length} FYI) — ${now}`;
 
-  const msg = [`From: ${DIGEST_TO_EMAIL}`, `To: ${DIGEST_TO_EMAIL}`, `Subject: ${subject}`,
+  const encodedSubject = `=?utf-8?b?${Buffer.from(subject).toString("base64")}?=`;
+  const msg = [`From: ${DIGEST_TO_EMAIL}`, `To: ${DIGEST_TO_EMAIL}`, `Subject: ${encodedSubject}`,
     `MIME-Version: 1.0`, `Content-Type: text/html; charset=utf-8`, ``, html].join("\r\n");
   const raw = Buffer.from(msg).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
