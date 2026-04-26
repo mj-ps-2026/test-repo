@@ -50,6 +50,7 @@ const ALWAYS_ARCHIVE_PATTERNS = [
   /chrispappas\.org$/i,
   /harderforcongress\.com$/i,
   /jamestalarico\.com$/i,
+  /polymarket\.com$/i,
 ];
 
 function buildGmailClient() {
