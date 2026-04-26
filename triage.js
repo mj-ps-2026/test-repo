@@ -18,19 +18,19 @@ const lookbackMs = parseFloat(LOOKBACK_HOURS) * 60 * 60 * 1000;
 
 // Pre-classified as DIGEST (useful, no action, remove from inbox)
 const ALWAYS_DIGEST_PATTERNS = [
-  /monarch\.com$/i,
-  /musicologie\.app$/i,
-  /parentsquare\.com$/i,
-  /ptboard\.com$/i,
-  /amazon\.com$/i,
-  /accounts\.google\.com$/i,
-  /linkedin\.com$/i,
-  /substack\.com$/i,
-  /politico\.com$/i,
-  /nextdoor\.com$/i,
-  /ifttt\.com$/i,
-  /infoemail\.microsoft\.com$/i,
-  /customeremail\.microsoftrewards\.com$/i,
+  { pattern: /monarch\.com$/i, category: "Finance" },
+  { pattern: /musicologie\.app$/i, category: "Appointments" },
+  { pattern: /parentsquare\.com$/i, category: "School" },
+  { pattern: /ptboard\.com$/i, category: "School" },
+  { pattern: /amazon\.com$/i, category: "Finance" },
+  { pattern: /accounts\.google\.com$/i, category: "Other" },
+  { pattern: /linkedin\.com$/i, category: "Job Alerts" },
+  { pattern: /substack\.com$/i, category: "News & Newsletters" },
+  { pattern: /politico\.com$/i, category: "News & Newsletters" },
+  { pattern: /nextdoor\.com$/i, category: "News & Newsletters" },
+  { pattern: /ifttt\.com$/i, category: "Other" },
+  { pattern: /infoemail\.microsoft\.com$/i, category: "Other" },
+  { pattern: /customeremail\.microsoftrewards\.com$/i, category: "Other" },
 ];
 
 // Pre-classified as INBOX (always high signal, keep in inbox)
@@ -64,9 +64,10 @@ function getSenderDomain(s = "") {
 
 function preClassify(sender) {
   const d = getSenderDomain(sender);
-  if (ALWAYS_ARCHIVE_PATTERNS.some((p) => p.test(d))) return "archive";
-  if (ALWAYS_INBOX_PATTERNS.some((p) => p.test(d))) return "inbox";
-  if (ALWAYS_DIGEST_PATTERNS.some((p) => p.test(d))) return "digest";
+  if (ALWAYS_ARCHIVE_PATTERNS.some((p) => p.test(d))) return { tier: "archive" };
+  if (ALWAYS_INBOX_PATTERNS.some((p) => p.test(d))) return { tier: "inbox" };
+  const match = ALWAYS_DIGEST_PATTERNS.find(({ pattern }) => pattern.test(d));
+  if (match) return { tier: "digest", category: match.category };
   return null;
 }
 
@@ -83,14 +84,18 @@ async function classifyBatch(emails) {
 
   const prompt = `You are triaging email for MJ, a product manager. Classify each email into one of three tiers:
 
-INBOX — requires MJ to DO something or RESPOND to someone. A real person is waiting or inaction has a consequence.
-DIGEST — useful to know but no action needed (notifications, confirmations, newsletters, alerts, FYI emails).
-ARCHIVE — junk: political fundraising, retail promos, travel deals, marketing, reward programs.
+INBOX — requires MJ to DO something or RESPOND to someone. A real human is waiting or inaction has a consequence. Calendar invites needing a response, direct messages from colleagues, job interview scheduling, doctor/appointment follow-ups. Be very strict — when in doubt, do NOT put in INBOX.
 
-Core rule: if MJ doesn't need to do anything or respond to anyone → not INBOX.
+DIGEST — useful information MJ would genuinely want to know: account activity (bank/investment alerts, shipping confirmations for recent orders), school/family updates, legitimate job opportunities, appointment confirmations, utility bills, government correspondence. Must have real informational value.
+
+ARCHIVE — everything else. This is the DEFAULT for any uncertainty. Archive: marketing emails, promotional offers, sale announcements, travel deals, hotel/airline promos, reward points, subscription upsells, event invitations from companies, newsletters from brands (not publications MJ subscribed to intentionally), social network digests, "we miss you" re-engagement emails, app activity summaries, any "unsubscribe" footer email that isn't in DIGEST.
+
+Bias heavily toward ARCHIVE. If an email is not clearly INBOX or clearly DIGEST, it is ARCHIVE.
+
+For DIGEST emails, assign one category from: Appointments, Finance, School, Job Alerts, News & Newsletters, Other.
 
 Return ONLY a JSON array, no markdown:
-[{"id":"...","tier":"inbox|digest|archive","summary":"One sentence (inbox: what action; digest: what happened; archive: empty)"}]
+[{"id":"...","tier":"inbox|digest|archive","category":"(only for digest tier)","summary":"One sentence (inbox: what action needed; digest: what happened; archive: empty string)"}]
 
 Emails:
 ${list}`;
@@ -114,15 +119,36 @@ ${list}`;
 
 async function archiveThread(gmail, id) {
   if (isDryRun) { console.log(`[DRY RUN] archive ${id}`); return; }
-  await gmail.users.threads.modify({ userId: "me", id, requestBody: { removeLabelIds: ["INBOX"] } });
+  try {
+    await gmail.users.threads.modify({ userId: "me", id, requestBody: { removeLabelIds: ["INBOX"] } });
+  } catch (e) {
+    console.warn(`  ⚠️  Failed to archive ${id}: ${e.message}`);
+  }
 }
 
+const DIGEST_CATEGORY_ORDER = ["Appointments", "Finance", "School", "Job Alerts", "News & Newsletters", "Other"];
+
 function row(e) {
-  const from = e.from.replace(/<.*>/, "").trim();
+  const from = e.from.replace(/<.*?>/, "").trim();
+  const link = `https://mail.google.com/mail/u/0/#all/${e.id}`;
   return `<tr><td style="padding:10px 0;border-bottom:1px solid #eee;vertical-align:top;">
-    <b>${from}</b> — ${e.subject}<br>
+    <a href="${link}" style="text-decoration:none;color:inherit;"><b>${from}</b> — ${e.subject}</a><br>
     <span style="color:#666;font-size:13px;">${e.summary}</span>
   </td></tr>`;
+}
+
+function groupedDigestHtml(digest) {
+  if (!digest.length) return "";
+  const groups = {};
+  for (const e of digest) {
+    const cat = e.category || "Other";
+    (groups[cat] = groups[cat] || []).push(e);
+  }
+  const sections = DIGEST_CATEGORY_ORDER.filter((c) => groups[c])
+    .concat(Object.keys(groups).filter((c) => !DIGEST_CATEGORY_ORDER.includes(c)));
+  return sections.map((cat) => `
+    <h4 style="color:#777;margin:20px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:1px;">${cat}</h4>
+    <table style="width:100%;border-collapse:collapse;">${groups[cat].map(row).join("")}</table>`).join("");
 }
 
 async function sendDigest(gmail, inbox, digest) {
@@ -137,7 +163,7 @@ async function sendDigest(gmail, inbox, digest) {
 
   const digestHtml = digest.length ? `
     <h3 style="color:#555;margin:24px 0 8px;font-size:14px;text-transform:uppercase;letter-spacing:1px;">📋 FYI (${digest.length})</h3>
-    <table style="width:100%;border-collapse:collapse;">${digest.map(row).join("")}</table>` : "";
+    ${groupedDigestHtml(digest)}` : "";
 
   const html = `<div style="font-family:-apple-system,Georgia,serif;max-width:620px;color:#1a1a1a;padding:0 16px;">
   <div style="border-bottom:3px solid #1a1a1a;padding-bottom:12px;margin-bottom:4px;">
@@ -184,11 +210,11 @@ async function main() {
 
   const forAI = [], preInbox = [], preDigest = [], preArchive = [];
   for (const e of emails) {
-    const tier = preClassify(e.from);
-    if (tier === "archive") preArchive.push(e);
-    else if (tier === "inbox") preInbox.push({ ...e, summary: "(see email)" });
-    else if (tier === "digest") preDigest.push({ ...e, summary: e.snippet?.slice(0, 100) ?? "" });
-    else forAI.push(e);
+    const pre = preClassify(e.from);
+    if (!pre) { forAI.push(e); continue; }
+    if (pre.tier === "archive") preArchive.push(e);
+    else if (pre.tier === "inbox") preInbox.push({ ...e, summary: "(see email)" });
+    else if (pre.tier === "digest") preDigest.push({ ...e, category: pre.category, summary: e.snippet?.slice(0, 100) ?? "" });
   }
 
   console.log(`🏷️  Pre: ${preInbox.length} inbox, ${preDigest.length} digest, ${preArchive.length} archive, ${forAI.length} → AI\n`);
@@ -207,7 +233,7 @@ async function main() {
         const r = map[e.id];
         if (!r) { aiInbox.push({ ...e, summary: "(unclassified)" }); continue; }
         if (r.tier === "archive") { console.log(`🗑️  ${e.from} — ${e.subject}`); await archiveThread(gmail, e.id); await sleep(100); }
-        else if (r.tier === "digest") { console.log(`📋 ${e.from} — ${e.subject}`); aiDigest.push({ ...e, summary: r.summary }); await archiveThread(gmail, e.id); await sleep(100); }
+        else if (r.tier === "digest") { console.log(`📋 [${r.category || "Other"}] ${e.from} — ${e.subject}`); aiDigest.push({ ...e, summary: r.summary, category: r.category || "Other" }); await archiveThread(gmail, e.id); await sleep(100); }
         else { console.log(`⚡ ${e.from} — ${e.subject}`); aiInbox.push({ ...e, summary: r.summary }); }
       }
     } catch (err) {
