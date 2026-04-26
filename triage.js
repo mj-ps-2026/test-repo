@@ -119,6 +119,49 @@ ${list}`;
   return JSON.parse(text.replace(/```json\n?|\n?```/g, "").trim());
 }
 
+function parseListUnsubscribe(header, postHeader) {
+  if (!header) return null;
+  const parts = [...header.matchAll(/<([^>]+)>/g)].map((m) => m[1]);
+  const url = parts.find((p) => p.startsWith("http"));
+  const mailto = parts.find((p) => p.startsWith("mailto:"));
+  const oneClick = !!url && postHeader?.includes("List-Unsubscribe=One-Click");
+  return (url || mailto) ? { url, mailto, oneClick } : null;
+}
+
+const unsubscribedDomains = new Set();
+
+async function tryUnsubscribe(gmail, email) {
+  const domain = getSenderDomain(email.from);
+  if (unsubscribedDomains.has(domain)) return;
+
+  const unsub = parseListUnsubscribe(email.listUnsubscribe, email.listUnsubscribePost);
+  if (!unsub) return;
+
+  unsubscribedDomains.add(domain);
+
+  if (isDryRun) { console.log(`  [DRY RUN] unsubscribe: ${domain}`); return; }
+
+  try {
+    if (unsub.oneClick) {
+      const res = await fetch(unsub.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "List-Unsubscribe=One-Click",
+      });
+      console.log(`  🚫 Unsubscribed (one-click ${res.status}): ${domain}`);
+    } else if (unsub.mailto) {
+      const [addr, qs] = unsub.mailto.replace("mailto:", "").split("?");
+      const subject = new URLSearchParams(qs || "").get("subject") || "unsubscribe";
+      const raw = Buffer.from([`From: ${DIGEST_TO_EMAIL}`, `To: ${addr}`, `Subject: ${subject}`, ``, ``].join("\r\n"))
+        .toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+      console.log(`  🚫 Unsubscribed (mailto): ${domain} → ${addr}`);
+    }
+  } catch (e) {
+    console.warn(`  ⚠️  Unsubscribe failed for ${domain}: ${e.message}`);
+  }
+}
+
 async function archiveThread(gmail, id) {
   if (isDryRun) { console.log(`[DRY RUN] archive ${id}`); return; }
   try {
@@ -203,10 +246,17 @@ async function main() {
   const emails = [];
   for (const t of threads) {
     try {
-      const d = await gmail.users.threads.get({ userId: "me", id: t.id, format: "METADATA", metadataHeaders: ["From", "Subject"] });
+      const d = await gmail.users.threads.get({ userId: "me", id: t.id, format: "METADATA", metadataHeaders: ["From", "Subject", "List-Unsubscribe", "List-Unsubscribe-Post"] });
       const msg = d.data.messages?.[0];
       const h = msg?.payload?.headers ?? [];
-      emails.push({ id: t.id, from: extractHeader(h, "From"), subject: extractHeader(h, "Subject"), snippet: msg?.snippet?.slice(0, 200) ?? "" });
+      emails.push({
+        id: t.id,
+        from: extractHeader(h, "From"),
+        subject: extractHeader(h, "Subject"),
+        snippet: msg?.snippet?.slice(0, 200) ?? "",
+        listUnsubscribe: extractHeader(h, "List-Unsubscribe"),
+        listUnsubscribePost: extractHeader(h, "List-Unsubscribe-Post"),
+      });
     } catch (e) { console.warn(`Skip ${t.id}: ${e.message}`); }
     await sleep(50);
   }
@@ -222,7 +272,7 @@ async function main() {
 
   console.log(`🏷️  Pre: ${preInbox.length} inbox, ${preDigest.length} digest, ${preArchive.length} archive, ${forAI.length} → AI\n`);
 
-  for (const e of preArchive) { console.log(`🗑️  ${e.from} — ${e.subject}`); await archiveThread(gmail, e.id); await sleep(100); }
+  for (const e of preArchive) { console.log(`🗑️  ${e.from} — ${e.subject}`); await tryUnsubscribe(gmail, e); await archiveThread(gmail, e.id); await sleep(100); }
   for (const e of preDigest) { console.log(`📋 ${e.from} — ${e.subject}`); await archiveThread(gmail, e.id); await sleep(100); }
 
   const aiInbox = [], aiDigest = [];
@@ -235,7 +285,7 @@ async function main() {
       for (const e of batch) {
         const r = map[e.id];
         if (!r) { aiInbox.push({ ...e, summary: "(unclassified)" }); continue; }
-        if (r.tier === "archive") { console.log(`🗑️  ${e.from} — ${e.subject}`); await archiveThread(gmail, e.id); await sleep(100); }
+        if (r.tier === "archive") { console.log(`🗑️  ${e.from} — ${e.subject}`); await tryUnsubscribe(gmail, e); await archiveThread(gmail, e.id); await sleep(100); }
         else if (r.tier === "digest") { console.log(`📋 [${r.category || "Other"}] ${e.from} — ${e.subject}`); aiDigest.push({ ...e, summary: r.summary, category: r.category || "Other" }); await archiveThread(gmail, e.id); await sleep(100); }
         else { console.log(`⚡ ${e.from} — ${e.subject}`); aiInbox.push({ ...e, summary: r.summary }); }
       }
