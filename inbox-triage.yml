@@ -1,0 +1,65 @@
+name: Inbox Triage
+
+on:
+  # Run every 15 minutes
+  schedule:
+    - cron: "*/15 * * * *"
+
+  # Manual trigger — set backfill=true to sweep all historical email
+  workflow_dispatch:
+    inputs:
+      backfill:
+        description: "Backfill mode (triage ALL inbox email, not just last 15 min)"
+        required: false
+        default: "false"
+        type: boolean
+      dry_run:
+        description: "Dry run (classify only, no archiving or digest send)"
+        required: false
+        default: "false"
+        type: boolean
+      lookback_hours:
+        description: "Custom lookback window in hours (overrides backfill if set)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine lookback window
+        id: window
+        run: |
+          if [ -n "${{ github.event.inputs.lookback_hours }}" ]; then
+            echo "hours=${{ github.event.inputs.lookback_hours }}" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.inputs.backfill }}" = "true" ]; then
+            echo "hours=8760" >> $GITHUB_OUTPUT   # 1 year
+          else
+            echo "hours=1" >> $GITHUB_OUTPUT       # normal incremental window
+          fi
+
+      - name: Run triage
+        env:
+          GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DIGEST_TO_EMAIL: ${{ secrets.DIGEST_TO_EMAIL }}
+          LOOKBACK_HOURS: ${{ steps.window.outputs.hours }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+        run: node triage.js

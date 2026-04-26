@@ -1,0 +1,21 @@
+{
+  "name": "inbox-triage",
+  "version": "1.0.0",
+  "description": "AI-powered Gmail inbox triage using Gemini 2.0 Flash",
+  "type": "module",
+  "main": "triage.js",
+  "scripts": {
+    "triage": "node triage.js",
+    "backfill": "LOOKBACK_HOURS=8760 node triage.js",
+    "dry-run": "DRY_RUN=true node triage.js",
+    "dry-backfill": "DRY_RUN=true LOOKBACK_HOURS=8760 node triage.js"
+  },
+  "dependencies": {
+    "googleapis": "^144.0.0",
+    "node-fetch": "^3.3.2",
+    "open": "^10.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
